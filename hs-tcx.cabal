@@ -1,0 +1,12 @@
+name:                hs-tcx
+version:             0.1.0.0
+build-type:          Simple
+cabal-version:       >=1.8
+
+executable hs-tcx
+  hs-source-dirs:      src
+  main-is:             Main.hs
+  build-depends:       base ==4.5.*
+                     , hxt >= 9.3 && < 9.4
+                     , time
+                     , old-locale
