@@ -4,6 +4,7 @@ import Text.XML.HXT.Core
 import Data.Time (UTCTime, readTime, formatTime)
 import Data.Time.Clock.POSIX (utcTimeToPOSIXSeconds)
 import System.Locale (defaultTimeLocale)
+import System.Environment
 
 data Activity = Activity [Lap]
   deriving (Show)
@@ -75,22 +76,43 @@ filterSegments minb maxb lst = filter (testSegment minb maxb) lst
 
 timeInZone :: Integer -> Integer -> (Trackpoint, Trackpoint) -> Integer
 timeInZone minb maxb (Trackpoint stime sbpm, Trackpoint etime ebpm)
-  | sbpm < minb = round(fromIntegral(etime-stime)*(fromIntegral(ebpm-minb)/fromIntegral(abs(ebpm-sbpm))))
-  | sbpm > maxb = round(fromIntegral(etime-stime)*(fromIntegral(maxb-ebpm)/fromIntegral(abs(ebpm-sbpm))))
-  | ebpm < minb = round(fromIntegral(etime-stime)*(fromIntegral(sbpm-minb)/fromIntegral(abs(ebpm-sbpm))))
-  | ebpm > maxb = round(fromIntegral(etime-stime)*(fromIntegral(maxb-sbpm)/fromIntegral(abs(ebpm-sbpm))))
-  | otherwise = (etime-stime)
+  | sbpm < minb && ebpm > minb && ebpm <= maxb = round(fromIntegral(etime-stime)*(fromIntegral(ebpm-minb)/fromIntegral(abs(ebpm-sbpm))))
+  | sbpm > maxb && ebpm < maxb && ebpm >= minb = round(fromIntegral(etime-stime)*(fromIntegral(maxb-ebpm)/fromIntegral(abs(ebpm-sbpm))))
+  | ebpm < minb && sbpm > minb && sbpm <= maxb = round(fromIntegral(etime-stime)*(fromIntegral(sbpm-minb)/fromIntegral(abs(ebpm-sbpm))))
+  | ebpm > maxb && sbpm < maxb && sbpm >= minb = round(fromIntegral(etime-stime)*(fromIntegral(maxb-sbpm)/fromIntegral(abs(ebpm-sbpm))))
+  | sbpm < minb && ebpm > maxb = round(fromIntegral(etime-stime)*(fromIntegral((ebpm-maxb)+(minb-sbpm))/fromIntegral(abs(ebpm-sbpm))))
+  | sbpm > maxb && ebpm < minb = round(fromIntegral(etime-stime)*(fromIntegral((sbpm-maxb)+(minb-ebpm))/fromIntegral(abs(ebpm-sbpm))))
+  | sbpm >= minb && ebpm <= maxb = (etime-stime)
+  | otherwise = 0
 
-minBPM = 153
-maxBPM = 162
+dispatch :: [(String, [String] -> IO ())]
+dispatch = [ ("calc", calc)
+           , ("dump", dump)
+           ]
 
 main :: IO ()
 main = do
-  activities <- runX (readDocument [withValidate no] "test-act.tcx" >>> getActivities)
+  (command:args) <- getArgs
+  let (Just action) = lookup command dispatch
+  action args
+
+calc :: [String] -> IO ()
+calc [fileName, minb, maxb] = do
+  let minBPM = read minb
+  let maxBPM = read maxb
+  activities <- runX (readDocument [withValidate no] fileName >>> getActivities)
   let trackpts = concatMap extractLapTrackpoints (head activities)
   let matchtrackpts = filterSegments minBPM maxBPM trackpts
   print (sum(map (timeInZone minBPM maxBPM) matchtrackpts))
-  mapM_ printStats matchtrackpts
+
+dump :: [String] -> IO ()
+dump [fileName, minb, maxb] = do
+  let minBPM = read minb
+  let maxBPM = read maxb
+  activities <- runX (readDocument [withValidate no] fileName >>> getActivities)
+  let trackpts = concatMap extractLapTrackpoints (head activities)
+  let matchtrackpts = filterSegments minBPM maxBPM trackpts
+  mapM_ (printStats minBPM maxBPM) matchtrackpts
   where
-    printStats (Trackpoint stime sbpm, Trackpoint etime ebpm) = do
+    printStats minBPM maxBPM (Trackpoint stime sbpm, Trackpoint etime ebpm) = do
       putStrLn (show stime ++ "," ++ show sbpm ++ " -> " ++ show etime ++ "," ++ show ebpm ++ " (" ++ show (timeInZone minBPM maxBPM (Trackpoint stime sbpm, Trackpoint etime ebpm)) ++ " seconds in zone)")
