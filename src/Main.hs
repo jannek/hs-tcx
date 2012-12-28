@@ -31,7 +31,7 @@ readt :: String -> UTCTime
 readt = readTime defaultTimeLocale "%FT%T.000%Z"
 
 timeToInteger :: UTCTime -> Integer
-timeToInteger = (fromInteger . round . utcTimeToPOSIXSeconds)
+timeToInteger = fromInteger . round . utcTimeToPOSIXSeconds
 
 getTrackpoint :: ArrowXml a => a XmlTree Trackpoint
 getTrackpoint = atTag "Trackpoint" >>>
@@ -63,7 +63,7 @@ testSegment :: Integer -> Integer -> (Trackpoint, Trackpoint) -> Bool
 testSegment minbpm maxbpm (start, end) = testTrackpoint minbpm maxbpm start || testTrackpoint minbpm maxbpm end
 
 testTrackpoint :: Integer -> Integer -> Trackpoint -> Bool
-testTrackpoint minbpm maxbpm (Trackpoint time bpm) = (bpm>=minbpm && bpm<=maxbpm)
+testTrackpoint minbpm maxbpm (Trackpoint time bpm) = bpm>=minbpm && bpm<=maxbpm
 
 extractLapTrackpoints :: Activity -> [(Trackpoint, Trackpoint)]
 extractLapTrackpoints (Activity laps) = concatMap extractTrackpoints laps
@@ -72,20 +72,20 @@ extractTrackpoints :: Lap -> [(Trackpoint, Trackpoint)]
 extractTrackpoints (Lap distance trackpts) = zip trackpts (tail trackpts)
 
 filterSegments :: Integer -> Integer -> [(Trackpoint, Trackpoint)] -> [(Trackpoint, Trackpoint)]
-filterSegments minb maxb lst = filter (testSegment minb maxb) lst
+filterSegments minb maxb = filter (testSegment minb maxb)
 
 timeInZone :: Integer -> Integer -> (Trackpoint, Trackpoint) -> Integer
 timeInZone minb maxb (Trackpoint stime sbpm, Trackpoint etime ebpm)
-  | sbpm < minb && ebpm > minb && ebpm <= maxb = round(fromIntegral(etime-stime)*(fromIntegral(ebpm-minb)/fromIntegral(abs(ebpm-sbpm))))
-  | sbpm > maxb && ebpm < maxb && ebpm >= minb = round(fromIntegral(etime-stime)*(fromIntegral(maxb-ebpm)/fromIntegral(abs(ebpm-sbpm))))
-  | ebpm < minb && sbpm > minb && sbpm <= maxb = round(fromIntegral(etime-stime)*(fromIntegral(sbpm-minb)/fromIntegral(abs(ebpm-sbpm))))
-  | ebpm > maxb && sbpm < maxb && sbpm >= minb = round(fromIntegral(etime-stime)*(fromIntegral(maxb-sbpm)/fromIntegral(abs(ebpm-sbpm))))
-  | sbpm < minb && ebpm > maxb = round(fromIntegral(etime-stime)*(fromIntegral((ebpm-maxb)+(minb-sbpm))/fromIntegral(abs(ebpm-sbpm))))
-  | sbpm > maxb && ebpm < minb = round(fromIntegral(etime-stime)*(fromIntegral((sbpm-maxb)+(minb-ebpm))/fromIntegral(abs(ebpm-sbpm))))
-  | sbpm >= minb && ebpm <= maxb = (etime-stime)
+  | sbpm < minb && ebpm > minb && ebpm <= maxb = round $ fromIntegral (etime-stime)*(fromIntegral (ebpm-minb) / fromIntegral (abs (ebpm-sbpm)))
+  | sbpm > maxb && ebpm < maxb && ebpm >= minb = round $ fromIntegral (etime-stime)*(fromIntegral (maxb-ebpm) / fromIntegral (abs (ebpm-sbpm)))
+  | ebpm < minb && sbpm > minb && sbpm <= maxb = round $ fromIntegral (etime-stime)*(fromIntegral (sbpm-minb) / fromIntegral (abs (ebpm-sbpm)))
+  | ebpm > maxb && sbpm < maxb && sbpm >= minb = round $ fromIntegral (etime-stime)*(fromIntegral (maxb-sbpm) / fromIntegral (abs (ebpm-sbpm)))
+  | sbpm < minb && ebpm > maxb = round $ fromIntegral (etime-stime)*(fromIntegral (ebpm-maxb+minb-sbpm) / fromIntegral (abs (ebpm-sbpm)))
+  | sbpm > maxb && ebpm < minb = round $ fromIntegral (etime-stime)*(fromIntegral (sbpm-maxb+minb-ebpm) / fromIntegral (abs (ebpm-sbpm)))
+  | sbpm >= minb && ebpm <= maxb = etime-stime
   | otherwise = 0
 
-dispatch :: [(String, [String] -> IO ())]
+dispatch :: [(String, [(Trackpoint, Trackpoint)] -> Integer -> Integer -> IO ())]
 dispatch = [ ("calc", calc)
            , ("dump", dump)
            ]
@@ -93,26 +93,22 @@ dispatch = [ ("calc", calc)
 main :: IO ()
 main = do
   (command:args) <- getArgs
+  let fileName = head $ args
+  let minBPM = read . head . tail $ args
+  let maxBPM = read . head . tail . tail $ args
+  activities <- runX (readDocument [withValidate no] fileName >>> getActivities)
+  let tracksegs = concatMap extractLapTrackpoints (head activities)
+  let matchedsegs = filterSegments minBPM maxBPM tracksegs
   let (Just action) = lookup command dispatch
-  action args
+  action matchedsegs minBPM maxBPM
 
-calc :: [String] -> IO ()
-calc [fileName, minb, maxb] = do
-  let minBPM = read minb
-  let maxBPM = read maxb
-  activities <- runX (readDocument [withValidate no] fileName >>> getActivities)
-  let trackpts = concatMap extractLapTrackpoints (head activities)
-  let matchtrackpts = filterSegments minBPM maxBPM trackpts
-  print (sum(map (timeInZone minBPM maxBPM) matchtrackpts))
+calc :: [(Trackpoint, Trackpoint)] -> Integer -> Integer -> IO ()
+calc segments minb maxb =
+  print . sum . map (timeInZone minb maxb) $ segments
 
-dump :: [String] -> IO ()
-dump [fileName, minb, maxb] = do
-  let minBPM = read minb
-  let maxBPM = read maxb
-  activities <- runX (readDocument [withValidate no] fileName >>> getActivities)
-  let trackpts = concatMap extractLapTrackpoints (head activities)
-  let matchtrackpts = filterSegments minBPM maxBPM trackpts
-  mapM_ (printStats minBPM maxBPM) matchtrackpts
+dump :: [(Trackpoint, Trackpoint)] -> Integer -> Integer -> IO ()
+dump segments minb maxb =
+  mapM_ (printStats minb maxb) segments
   where
-    printStats minBPM maxBPM (Trackpoint stime sbpm, Trackpoint etime ebpm) = do
-      putStrLn (show stime ++ "," ++ show sbpm ++ " -> " ++ show etime ++ "," ++ show ebpm ++ " (" ++ show (timeInZone minBPM maxBPM (Trackpoint stime sbpm, Trackpoint etime ebpm)) ++ " seconds in zone)")
+    printStats minb maxb (Trackpoint stime sbpm, Trackpoint etime ebpm) =
+      putStrLn (show stime ++ "," ++ show sbpm ++ " -> " ++ show etime ++ "," ++ show ebpm ++ " (" ++ show (timeInZone minb maxb (Trackpoint stime sbpm, Trackpoint etime ebpm)) ++ " seconds in zone)")
