@@ -1,7 +1,7 @@
 {-# LANGUAGE Arrows, NoMonomorphismRestriction #-}
 
 import Text.XML.HXT.Core
-import Data.Time (UTCTime, readTime)
+import Data.Time (UTCTime, readTime, formatTime)
 import System.Locale (defaultTimeLocale)
 
 data Activity = Activity [Lap]
@@ -10,12 +10,12 @@ data Activity = Activity [Lap]
 data Lap = Lap {
     lapDistance :: Float
   , lapTrackpoints :: [Trackpoint]
-  } deriving (Show)
+  } deriving (Eq, Show)
 
 data Trackpoint = Trackpoint {
     tpTime :: UTCTime
-  , tpBpm :: String
-  } deriving (Show)
+  , tpBpm :: Integer
+  } deriving (Eq, Show)
 
 atTag :: ArrowXml a => String -> a XmlTree XmlTree
 atTag tag = deep (isElem >>> hasName tag)
@@ -28,12 +28,15 @@ text = getChildren >>> getText
 readt :: String -> UTCTime
 readt = readTime defaultTimeLocale "%FT%T.000%Z"
 
+showt :: UTCTime -> String
+showt = formatTime defaultTimeLocale "%s"
+
 getTrackpoint :: ArrowXml a => a XmlTree Trackpoint
 getTrackpoint = atTag "Trackpoint" >>>
   proc x -> do
     time <- text <<< atTag "Time" -< x
     bpm <- text <<< atTag "Value" <<< atTag "HeartRateBpm" -< x
-    returnA -< Trackpoint (readt time) bpm
+    returnA -< Trackpoint (readt time) (read bpm)
 
 getLap :: ArrowXml a => a XmlTree Lap
 getLap = getChildren >>> isElem >>> hasName "Lap" >>>
@@ -60,13 +63,10 @@ main = do
   mapM_ printActivity (head activities)
   where
     printActivity (Activity laps) = do
-      putStrLn "Activity:"
       mapM_ printLaps laps
 
     printLaps (Lap distance trackpts) = do
-      putStrLn "  Lap:"
-      putStrLn ("    Distance: " ++ show distance)
-      mapM_ printTrackpoint trackpts
+      mapM_ printTrackseg (zip trackpts (tail trackpts))
 
-    printTrackpoint (Trackpoint time bpm) =
-      putStrLn ("    time: " ++ show time ++ " bpm: " ++ show bpm)
+    printTrackseg ((Trackpoint stime sbpm, Trackpoint etime ebpm)) = do
+      putStrLn (showt stime ++ "," ++ show sbpm ++ " -> " ++ showt etime ++ "," ++show ebpm)
