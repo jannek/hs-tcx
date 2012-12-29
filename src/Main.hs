@@ -38,7 +38,7 @@ getTrackpoint = atTag "Trackpoint" >>>
   proc x -> do
     time <- text <<< atTag "Time" -< x
     bpm <- text <<< atTag "Value" <<< atTag "HeartRateBpm" -< x
-    returnA -< Trackpoint (timeToInteger (readt time)) (read bpm)
+    returnA -< Trackpoint (timeToInteger . readt $ time) (read bpm)
 
 getLap :: ArrowXml a => a XmlTree Lap
 getLap = getChildren >>> isElem >>> hasName "Lap" >>>
