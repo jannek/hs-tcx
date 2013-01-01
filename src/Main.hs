@@ -5,6 +5,8 @@ import Data.Time (UTCTime, readTime, formatTime)
 import Data.Time.Clock.POSIX (utcTimeToPOSIXSeconds)
 import System.Locale (defaultTimeLocale)
 import System.Environment
+import Control.Applicative
+import Options.Applicative
 
 data Activity = Activity [Lap]
   deriving (Show)
@@ -85,26 +87,49 @@ timeInZone minb maxb (Trackpoint stime sbpm, Trackpoint etime ebpm)
   | sbpm >= minb && ebpm <= maxb = etime-stime
   | otherwise = 0
 
-dispatch :: [(String, [(Trackpoint, Trackpoint)] -> Integer -> Integer -> IO ())]
-dispatch = [ ("calc", calc)
-           , ("dump", dump)
-           ]
+data Options = Options
+     { minBPM   :: Integer
+     , maxBPM   :: Integer
+     , dumping  :: Bool
+     , fileName :: String }
+
+parse :: Parser Options
+parse = Options
+      <$> option
+          (  long "minbpm"
+          & short 'm'
+          & metavar "BPM"
+          & help "BPM zone lower limit" )
+      <*> option
+          (  long "maxbpm"
+          & short 'M'
+          & metavar "BPM"
+          & help "BPM zone upper limit" )
+      <*> switch
+          (  long "dump"
+          & short 'd'
+          & help "Output matching track segments" )
+      <*> argument str ( metavar "FILE" )
 
 main :: IO ()
-main = do
-  (command:args) <- getArgs
-  let fileName = head $ args
-  let minBPM = read . head . tail $ args
-  let maxBPM = read . head . tail . tail $ args
+main = execParser opts >>= process
+  where
+    opts = info (helper <*> parse)
+      (  fullDesc
+      & progDesc "Calculates time spent inside a BPM zone from a TCX file."
+      & header "hs-tcx - TCX zone analyzer" )
+
+process :: Options -> IO ()
+process (Options minBPM maxBPM dumping fileName) = do
   activities <- runX (readDocument [withValidate no] fileName >>> getActivities)
   let tracksegs = concatMap extractLapTrackpoints (head activities)
   let matchedsegs = filterSegments minBPM maxBPM tracksegs
-  let (Just action) = lookup command dispatch
-  action matchedsegs minBPM maxBPM
+  calc dumping matchedsegs minBPM maxBPM
 
-calc :: [(Trackpoint, Trackpoint)] -> Integer -> Integer -> IO ()
-calc segments minb maxb =
-  print . sum . map (timeInZone minb maxb) $ segments
+calc :: Bool -> [(Trackpoint, Trackpoint)] -> Integer -> Integer -> IO ()
+calc dumping segments minb maxb
+  | dumping   = dump segments minb maxb
+  | otherwise = print . sum . map (timeInZone minb maxb) $ segments
 
 dump :: [(Trackpoint, Trackpoint)] -> Integer -> Integer -> IO ()
 dump segments minb maxb =

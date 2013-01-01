@@ -10,3 +10,4 @@ executable hs-tcx
                      , hxt >= 9.3 && < 9.4
                      , time
                      , old-locale
+                     , optparse-applicative
